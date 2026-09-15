@@ -19,6 +19,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 import aiohttp
+from PIL import Image, ImageStat
 
 from config import settings
 
@@ -139,3 +140,10 @@ async def find_and_download_image(query: str) -> Path | None:
     file_path = await _write_temp_file(content)
     log.info("Картинка для %r сохранена: %s", query, file_path)
     return file_path
+
+
+def analyze_brightness(path: Path) -> float:
+    """Средняя яркость картинки (0-255) — используется для подбора светлого
+    или тёмного текста поверх кастомного фона презентации."""
+    with Image.open(str(path)) as im:
+        return ImageStat.Stat(im.convert("L")).mean[0]
