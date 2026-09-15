@@ -46,7 +46,6 @@ class Settings:
     output_dir: Path
     image_dir: Path
     logo_dir: Path
-    background_dir: Path
     log_level: str
     topic_min_len: int
     topic_max_len: int
@@ -68,7 +67,6 @@ def load_settings() -> Settings:
     output_dir = Path(_env("OUTPUT_DIR") or str(BASE_DIR / "output"))
     image_dir = output_dir / "images"
     logo_dir = output_dir / "logos"
-    background_dir = output_dir / "backgrounds"
 
     return Settings(
         telegram_bot_token=token,
@@ -81,7 +79,6 @@ def load_settings() -> Settings:
         output_dir=output_dir,
         image_dir=image_dir,
         logo_dir=logo_dir,
-        background_dir=background_dir,
         log_level=_env("LOG_LEVEL") or "INFO",
         topic_min_len=_env_int("TOPIC_MIN_LEN", 3),
         topic_max_len=_env_int("TOPIC_MAX_LEN", 300),

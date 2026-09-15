@@ -19,33 +19,20 @@ from config import settings
 
 log = logging.getLogger(__name__)
 
-REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=120)
+REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=60)
 
 
 class AIServiceError(Exception):
     """Ожидаемый сбой ИИ-сервиса (ключ, таймаут, битый JSON)."""
 
 
-FORMAT_INSTRUCTIONS = {
-    "image_only": (
-        "Визуальный формат — ТОЛЬКО КАРТИНКИ: почти не используй bullets (максимум одна "
-        "короткая подпись-мысль на слайд, без списков). Каждый контентный слайд ОБЯЗАН "
-        "опираться на изображение или график: используй layout image_left/image_right/"
-        "big_photo/stat/chart/quote. НЕ используй layout text и cards — на них нет "
-        "картинки, а формат требует визуального сторителлинга."
-    ),
-    "image_heavy": (
-        "Визуальный формат — БОЛЬШЕ КАРТИНОК, ЧЕМ ТЕКСТА: большинство контентных слайдов "
-        "должны опираться на изображение или график (image_left/image_right/big_photo/"
-        "chart/stat/cards); layout text используй редко, только если картинка совсем не "
-        "подходит. Буллеты короткие — максимум 2 на слайд."
-    ),
-    "balanced": (
-        "Визуальный формат — БАЛАНС: чередуй текстовые и визуальные слайды примерно "
-        "поровну, выбирай layout по смыслу содержимого, а не механически по кругу."
-    ),
+TONE_INSTRUCTIONS = {
+    "business": "Стиль — деловой, сдержанный, фактологичный: как в консалтинговой презентации для руководства.",
+    "startup": "Стиль — энергичный питч для инвесторов: короткие цепляющие формулировки, акцент на росте и выгоде.",
+    "academic": "Стиль — учебный, объясняющий: чёткие определения, логичная последовательность, без маркетинговых преувеличений.",
+    "minimal": "Стиль — минималистичный: максимально короткие формулировки, минимум слов на слайд.",
 }
-DEFAULT_FORMAT = "balanced"
+DEFAULT_TONE = "business"
 
 LANG_INSTRUCTIONS = {
     "ru": "Весь текст (title, subtitle, bullets, cards, metric_label) пиши на русском языке.",
@@ -62,9 +49,9 @@ _IMAGE_QUERY_NOTE = (
 
 _LAYOUTS_BLOCK = """
 Каждый слайд (кроме первого, титульного) должен иметь поле "type", одно из:
-    - "content" — обычный слайд с буллетами/карточками/метрикой/графиком
-    - "section" — слайд-разделитель раздела: смена темы, без буллетов и без
-      цитаты (используй 1-2 раза на презентацию)
+    - "content" — обычный слайд с буллетами/карточками/метрикой
+    - "section" — слайд-акцент между блоками: короткая яркая мысль без буллетов
+      (используй 1-2 раза на презентацию, для смены темы)
 
 Для слайдов типа "content" ОБЯЗАТЕЛЬНО укажи поле "layout", одно из:
     - "text" — только текст, буллеты на всю ширину (используй, когда картинка не нужна)
@@ -76,45 +63,17 @@ _LAYOUTS_BLOCK = """
     - "stat" — акцент на ОДНОЙ метрике/цифре на весь слайд; заполни "metric"
       (само число/значение, коротко, например "37%" или "x4") и
       "metric_label" (что эта цифра значит)
-    - "chart" — диаграмма по данным; используй ТОЛЬКО если у темы реально
-      есть 2+ сопоставимых числовых значения по 2+ категориям (доля рынка,
-      динамика по годам, сравнение показателей). НЕ придумывай точную
-      статистику там, где её нет по смыслу темы — в этом случае используй
-      "text"/"cards" вместо "chart". Заполни "chart":
-      {"type": "bar"|"pie"|"line", "categories": ["2023","2024","2025"],
-       "series": [{"name": "Выручка", "values": [12, 18, 27]}]}
-      (2-6 категорий, 1-3 серии, длина values == длине categories)
-    - "timeline" — последовательность во времени/этапы дорожной карты (3-5
-      шагов); вместо "bullets" заполни "timeline": список объектов
-      {"label": "Q1 2026", "title": "Запуск MVP", "body": "1 короткое предложение"}
-    - "comparison" — сравнение РОВНО двух альтернатив/подходов бок о бок;
-      вместо "bullets" заполни "comparison":
-      {"left": {"title": "Вариант A", "bullets": ["...", "..."]},
-       "right": {"title": "Вариант B", "bullets": ["...", "..."]}}
-    - "team" — список людей/ролей (2-6 человек); вместо "bullets" заполни
-      "team": список объектов {"name": "Имя", "role": "Роль", "note": "1 короткая деталь"}
-    - "big_photo" — эмоциональный/вдохновляющий слайд, картинка на весь
-      слайд, минимум текста: заполни "image_query" (обязательно) и короткий
-      "title"/"subtitle", НЕ используй "bullets"
-
-Для слайда типа "section" (разделитель) заполни только "title" (и опционально
-короткий "kicker" как лейбл раздела) — без bullets, без цитаты и атрибуции.
-Если нужна именно ЦИТАТА с атрибуцией — используй "type": "section",
-"layout": "quote", "title" = сам текст цитаты, "subtitle" = имя автора.
 
 ОБЯЗАТЕЛЬНО используй хотя бы один слайд "cards" и хотя бы один "stat" в
 презентации из 6+ слайдов, если это уместно теме — они делают колоду
-заметно более "живой", чем сплошной текст с буллетами. Используй "chart",
-"timeline", "comparison", "team" или "big_photo" там, где это уместно теме,
-чтобы колода не выглядела однообразно.
+заметно более "живой", чем сплошной текст с буллетами.
 
-Чередуй разные layout между слайдами по смыслу содержимого — не иди
-механически по кругу одних и тех же 2-3 layout.
+Чередуй разные layout между слайдами — не ставь везде один и тот же.
 
-Если layout — "image_left", "image_right" или "big_photo", ОБЯЗАТЕЛЬНО
-добавь поле "image_query" — короткий поисковый запрос НА АНГЛИЙСКОМ для
-стоковой картинки, которая по смыслу подходит содержимому слайда (например
-"team meeting office", "data analytics chart", "renewable energy solar panels").
+Если layout — "image_left" или "image_right", ОБЯЗАТЕЛЬНО добавь поле
+"image_query" — короткий поисковый запрос НА АНГЛИЙСКОМ для стоковой картинки,
+которая по смыслу подходит содержимому слайда (например "team meeting office",
+"data analytics chart", "renewable energy solar panels").
 """.strip()
 
 _TEXT_REQUIREMENTS = """
@@ -136,39 +95,21 @@ _SCHEMA_EXAMPLE = """
         {"title": "...", "body": "..."}, {"title": "...", "body": "..."}, {"title": "...", "body": "..."}
       ] },
     { "type": "content", "layout": "stat", "title": "...", "metric": "...", "metric_label": "..." },
-    { "type": "content", "layout": "chart", "title": "...", "chart": {
-        "type": "bar", "categories": ["2023", "2024", "2025"],
-        "series": [{"name": "...", "values": [12, 18, 27]}]
-      } },
-    { "type": "content", "layout": "timeline", "title": "...", "timeline": [
-        {"label": "Q1", "title": "...", "body": "..."},
-        {"label": "Q2", "title": "...", "body": "..."},
-        {"label": "Q3", "title": "...", "body": "..."}
-      ] },
-    { "type": "content", "layout": "comparison", "title": "...", "comparison": {
-        "left": {"title": "...", "bullets": ["...", "..."]},
-        "right": {"title": "...", "bullets": ["...", "..."]}
-      } },
-    { "type": "content", "layout": "team", "title": "...", "team": [
-        {"name": "...", "role": "...", "note": "..."}, {"name": "...", "role": "...", "note": "..."}
-      ] },
-    { "type": "content", "layout": "big_photo", "title": "...", "subtitle": "...", "image_query": "..." },
-    { "type": "section", "title": "..." },
-    { "type": "section", "layout": "quote", "title": "...", "subtitle": "Имя автора" }
+    { "type": "section", "title": "..." }
   ]
 }
 """.strip()
 
 
-def _format_instruction(visual_format: str | None) -> str:
-    return FORMAT_INSTRUCTIONS.get(visual_format or DEFAULT_FORMAT, FORMAT_INSTRUCTIONS[DEFAULT_FORMAT])
+def _tone_instruction(tone: str | None) -> str:
+    return TONE_INSTRUCTIONS.get(tone or DEFAULT_TONE, TONE_INSTRUCTIONS[DEFAULT_TONE])
 
 
 def _lang_instruction(lang: str | None) -> str:
     return LANG_INSTRUCTIONS.get(lang or DEFAULT_LANG, LANG_INSTRUCTIONS[DEFAULT_LANG])
 
 
-def build_prompt(topic: str, slides_count: int, *, visual_format: str | None = None, lang: str | None = None) -> str:
+def build_prompt(topic: str, slides_count: int, *, tone: str | None = None, lang: str | None = None) -> str:
     # Тема не вставляется внутрь JSON-примера кавычками — иначе кавычки в теме ломают промпт.
     topic_json = json.dumps(topic, ensure_ascii=False)
     return f"""
@@ -184,10 +125,8 @@ def build_prompt(topic: str, slides_count: int, *, visual_format: str | None = N
     - выглядит как выступление, а не конспект
     - содержит инсайты, а не банальности
     - визуально разнообразна: НЕ делай все слайды одинаковыми по раскладке
-    - пишет кратко: каждый буллет — одна законченная мысль без вводных
-      конструкций ("стоит отметить, что", "важно понимать, что" и т.п.)
 
-{_format_instruction(visual_format)}
+{_tone_instruction(tone)}
 {_lang_instruction(lang)}
 
 Структура (не обязательно использовать все пункты, выбери уместные):
@@ -219,7 +158,7 @@ def build_prompt_from_document(
     doc_text: str,
     slides_count: int,
     *,
-    visual_format: str | None = None,
+    tone: str | None = None,
     lang: str | None = None,
     feedback: str | None = None,
 ) -> str:
@@ -246,7 +185,7 @@ def build_prompt_from_document(
 подсказку о структуре, но не копируй заголовки как есть, если можно сказать
 точнее.
 
-{_format_instruction(visual_format)}
+{_tone_instruction(tone)}
 {_lang_instruction(lang)}
 {feedback_block}
 {_LAYOUTS_BLOCK}
@@ -307,22 +246,22 @@ async def _call_openrouter(prompt: str) -> str:
 
 
 async def generate_presentation_text(
-    topic: str, slides_count: int, *, visual_format: str | None = None, lang: str | None = None
+    topic: str, slides_count: int, *, tone: str | None = None, lang: str | None = None
 ) -> str:
     """Отправляет промпт в OpenRouter и возвращает сырой текстовый ответ модели."""
-    return await _call_openrouter(build_prompt(topic, slides_count, visual_format=visual_format, lang=lang))
+    return await _call_openrouter(build_prompt(topic, slides_count, tone=tone, lang=lang))
 
 
 async def generate_presentation_text_from_document(
     doc_text: str,
     slides_count: int,
     *,
-    visual_format: str | None = None,
+    tone: str | None = None,
     lang: str | None = None,
     feedback: str | None = None,
 ) -> str:
     """То же самое, но на основе текста Word-документа (с опциональной правкой)."""
-    prompt = build_prompt_from_document(doc_text, slides_count, visual_format=visual_format, lang=lang, feedback=feedback)
+    prompt = build_prompt_from_document(doc_text, slides_count, tone=tone, lang=lang, feedback=feedback)
     return await _call_openrouter(prompt)
 
 
