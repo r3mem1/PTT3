@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -155,11 +156,6 @@ def _add_footer(slide, ctx: BuildContext, *, on_dark: bool = False) -> None:
     color = theme["on_dark_muted"] if on_dark else theme["muted_color"]
     top = ctx.prs.slide_height - FOOTER_H
     width = ctx.prs.slide_width - MARGIN * 2
-    label = ctx.deck_title[:42]
-    _textbox(
-        slide, MARGIN, top, width * 0.75, FOOTER_H, label,
-        font=theme["body_font"], size=Pt(10), color=color,
-    )
     _textbox(
         slide, MARGIN, top, width, FOOTER_H, f"{ctx.index:02d}  /  {ctx.total:02d}",
         font=theme["body_font"], size=Pt(10), color=color, align=PP_ALIGN.RIGHT,
@@ -631,6 +627,16 @@ def _add_comparison_slide(ctx: BuildContext, slide_data: SlideData) -> None:
     _add_footer(slide, ctx, on_dark=on_dark)
 
 
+def _initials(name: str) -> str:
+    """Инициалы для кружка-аватара. Убирает скобки-уточнения вроде
+    "SpaceX (Starlink)" перед разбором на слова, иначе первым "инициалом"
+    может стать открывающая скобка."""
+    cleaned = re.sub(r"\(.*?\)", "", name).strip()
+    words = [w for w in re.split(r"\s+", cleaned) if w and w[0].isalpha()]
+    letters = "".join(w[0].upper() for w in words[:2])
+    return letters or "?"
+
+
 def _add_team_slide(ctx: BuildContext, slide_data: SlideData) -> None:
     theme = ctx.theme
     slide, on_dark = _new_slide(ctx)
@@ -639,12 +645,19 @@ def _add_team_slide(ctx: BuildContext, slide_data: SlideData) -> None:
         slide, ctx.prs, slide_data, theme=theme, on_dark=on_dark
     )
     members = (slide_data.get("team") or [])[:6]
-    if not members:
+    n = len(members)
+    if n == 0:
         _add_footer(slide, ctx, on_dark=on_dark)
         return
 
-    cols = min(3, len(members))
-    rows = (len(members) + cols - 1) // cols
+    # 4 участников выглядят аккуратнее сеткой 2x2, чем "3 + одинокий 4-й".
+    if n <= 2:
+        cols = n
+    elif n == 4:
+        cols = 2
+    else:
+        cols = 3
+    rows = (n + cols - 1) // cols
     available_w = ctx.prs.slide_width - MARGIN * 2
     available_h = ctx.prs.slide_height - content_top - FOOTER_H - Inches(0.2)
     cell_w = available_w // cols
@@ -656,12 +669,15 @@ def _add_team_slide(ctx: BuildContext, slide_data: SlideData) -> None:
 
     for i, member in enumerate(members):
         row, col = divmod(i, cols)
-        cell_left = MARGIN + cell_w * col
+        # Неполную последнюю строку центрируем, а не прижимаем к левому краю.
+        items_in_row = min(cols, n - row * cols)
+        row_left = MARGIN + (available_w - cell_w * items_in_row) // 2
+        cell_left = row_left + cell_w * col
         cell_top = content_top + cell_h * row
         avatar_left = cell_left + (cell_w - avatar_d) // 2
         avatar = slide.shapes.add_shape(MSO_SHAPE.OVAL, avatar_left, cell_top, avatar_d, avatar_d)
         _fill_solid(avatar, theme["accent_soft"])
-        initials = "".join(part[0].upper() for part in (member.get("name") or "?").split()[:2]) or "?"
+        initials = _initials(member.get("name") or "")
         _textbox(
             slide, avatar_left, cell_top, avatar_d, avatar_d, initials,
             font=theme["heading_font"], size=Pt(22), color=theme["accent"], bold=True,
