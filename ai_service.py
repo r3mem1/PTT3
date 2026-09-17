@@ -48,8 +48,21 @@ FORMAT_INSTRUCTIONS = {
 DEFAULT_FORMAT = "balanced"
 
 LANG_INSTRUCTIONS = {
-    "ru": "Весь текст (title, subtitle, bullets, cards, metric_label) пиши на русском языке.",
-    "en": "Write all text fields (title, subtitle, bullets, cards, metric_label) in English.",
+    "ru": (
+        "АБСОЛЮТНО ВЕСЬ текст — title, subtitle, bullets, body, cards, "
+        "metric_label, названия категорий/серий в chart, timeline, comparison, "
+        "team — пиши на русском языке, без единого слова на другом языке. "
+        "Это касается и цитаты в layout \"quote\": даже если в оригинале она "
+        "известна на другом языке, ПЕРЕВЕДИ её на русский, не оставляй "
+        "оригинальную формулировку."
+    ),
+    "en": (
+        "Write ABSOLUTELY ALL text — title, subtitle, bullets, body, cards, "
+        "metric_label, chart category/series names, timeline, comparison, "
+        "team — in English, with no words left in another language. This "
+        "also applies to the \"quote\" layout: translate the quote into "
+        "English even if it is originally famous in another language."
+    ),
 }
 DEFAULT_LANG = "ru"
 
@@ -104,7 +117,9 @@ _LAYOUTS_BLOCK = """
       "title"/"subtitle", НЕ используй "bullets"
 
 Для настоящей ЦИТАТЫ с атрибуцией используй "type": "section", "layout":
-"quote", "title" = сам текст цитаты, "subtitle" = имя автора.
+"quote", "title" = сам текст цитаты, "subtitle" = имя автора. Текст цитаты
+ОБЯЗАТЕЛЬНО переведи на язык презентации (см. ниже) — не оставляй цитату на
+языке оригинала, даже если она широко известна именно в таком виде.
 
 Для layout "text", "image_left", "image_right" — ВЫБЕРИ ОДНО из двух, в
 зависимости от того, что подходит содержимому:
