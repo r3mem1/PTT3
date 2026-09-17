@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        # Тесты не обращаются к Telegram/OpenRouter/Pexels - реальные ключи
+        # не нужны, tests/conftest.py подставляет фиктивные значения.
+        run: pytest -v
