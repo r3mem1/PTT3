@@ -29,7 +29,6 @@ from theme import (
     BODY_SIZE,
     FOOTER_H,
     GUTTER,
-    KICKER_SIZE,
     LOGO_SIZE,
     MARGIN,
     METRIC_SIZE,
@@ -129,10 +128,6 @@ def _textbox(
     _set_run(p, text, font=font, size=size, color=color, bold=bold, italic=italic)
     tf._txBody.bodyPr.set("anchor", anchor)
     return box
-
-
-def _kicker_text(slide_data: SlideData, fallback: str) -> str:
-    return (slide_data.get("kicker") or fallback).upper()
 
 
 def _add_logo(slide, ctx: BuildContext) -> None:
@@ -273,23 +268,18 @@ def _new_slide(ctx: BuildContext, *, dark: bool = False) -> tuple:
     return slide, dark
 
 
-def _add_title_block(
-    slide, prs, slide_data: SlideData, *, kicker: str, theme: dict, on_dark: bool = False
-) -> Length:
+def _add_title_block(slide, prs, slide_data: SlideData, *, theme: dict, on_dark: bool = False) -> Length:
+    """Заголовок слайда: просто крупный жирный текст сверху, без служебного
+    лейбла-эйбрау над ним."""
     title_color = theme["on_dark"] if on_dark else theme["title_color"]
-    kicker_color = theme["accent"] if not on_dark else theme["accent_soft"]
     left = MARGIN + Inches(0.12)
     width = prs.slide_width - MARGIN * 2
     _textbox(
-        slide, left, Inches(0.38), width, Inches(0.32), kicker,
-        font=theme["body_font"], size=KICKER_SIZE, color=kicker_color, bold=True,
-    )
-    _textbox(
-        slide, left, Inches(0.68), width, Inches(1.15), slide_data.get("title") or "",
+        slide, left, Inches(0.45), width, Inches(1.3), slide_data.get("title") or "",
         font=theme["heading_font"], size=TITLE_SIZE, color=title_color, bold=True,
         shrink_to_fit=True,
     )
-    return Inches(1.95)
+    return Inches(1.85)
 
 
 async def _add_title_slide(ctx: BuildContext, slide_data: SlideData) -> None:
@@ -305,12 +295,7 @@ async def _add_title_slide(ctx: BuildContext, slide_data: SlideData) -> None:
         pad = MARGIN + Inches(0.4)
         text_w = prs.slide_width - pad - MARGIN
         _textbox(
-            slide, pad, Inches(2.1), text_w, Inches(0.35),
-            _kicker_text(slide_data, "Briefing"),
-            font=theme["body_font"], size=KICKER_SIZE, color=theme["accent_soft"], bold=True,
-        )
-        _textbox(
-            slide, pad, Inches(2.55), text_w, Inches(2.4),
+            slide, pad, Inches(2.15), text_w, Inches(2.6),
             slide_data.get("title") or ctx.deck_title,
             font=theme["heading_font"], size=Pt(40), color=theme["on_dark"], bold=True,
             shrink_to_fit=True,
@@ -340,12 +325,7 @@ async def _add_title_slide(ctx: BuildContext, slide_data: SlideData) -> None:
 
     pad = Inches(0.7)
     _textbox(
-        slide, pad, Inches(1.55), panel_w - pad * 1.4, Inches(0.35),
-        _kicker_text(slide_data, "Briefing"),
-        font=theme["body_font"], size=KICKER_SIZE, color=theme["accent_soft"], bold=True,
-    )
-    _textbox(
-        slide, pad, Inches(2.0), panel_w - pad * 1.4, Inches(2.4),
+        slide, pad, Inches(1.6), panel_w - pad * 1.4, Inches(2.8),
         slide_data.get("title") or ctx.deck_title,
         font=theme["heading_font"], size=Pt(40), color=theme["on_dark"], bold=True,
         shrink_to_fit=True,
@@ -360,17 +340,20 @@ async def _add_title_slide(ctx: BuildContext, slide_data: SlideData) -> None:
 
 
 def _add_points(slide, left, top, width, bullets: list[str], theme: dict, *, light: bool = True) -> None:
+    """Список пунктов без нумерации 01/02/03 — просто маленький акцентный
+    маркер слева от каждой строки."""
     row_h = Inches(0.92)
-    num_color = theme["accent"]
+    marker_color = theme["accent"]
+    marker_size = Inches(0.11)
     text_color = theme["body_color"] if light else theme["on_dark"]
     for i, bullet in enumerate(bullets[:4]):
         y = top + row_h * i
-        _textbox(
-            slide, left, y, Inches(0.55), Inches(0.4), f"{i + 1:02d}",
-            font=theme["heading_font"], size=Pt(16), color=num_color, bold=True,
+        marker = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, left, y + Inches(0.1), marker_size, marker_size
         )
+        _fill_solid(marker, marker_color)
         _textbox(
-            slide, left + Inches(0.62), y, width - Inches(0.62), Inches(0.82), bullet,
+            slide, left + Inches(0.28), y, width - Inches(0.28), Inches(0.82), bullet,
             font=theme["body_font"], size=BODY_SIZE, color=text_color, shrink_to_fit=True,
         )
 
@@ -379,15 +362,21 @@ def _add_text_slide(ctx: BuildContext, slide_data: SlideData) -> None:
     theme = ctx.theme
     slide, on_dark = _new_slide(ctx)
     _add_rail(slide, ctx.prs, theme["accent"])
-    content_top = _add_title_block(
-        slide, ctx.prs, slide_data, kicker=_kicker_text(slide_data, "Key points"), theme=theme, on_dark=on_dark
-    )
-    bullets = slide_data.get("bullets") or []
-    if bullets:
-        _add_points(
-            slide, MARGIN + Inches(0.12), content_top, ctx.prs.slide_width - MARGIN * 2, bullets, theme,
-            light=not on_dark,
+    content_top = _add_title_block(slide, ctx.prs, slide_data, theme=theme, on_dark=on_dark)
+    content_left = MARGIN + Inches(0.12)
+    content_w = ctx.prs.slide_width - MARGIN * 2
+    body = slide_data.get("body") or ""
+    if body:
+        color = theme["on_dark"] if on_dark else theme["body_color"]
+        content_h = ctx.prs.slide_height - content_top - FOOTER_H - Inches(0.2)
+        _textbox(
+            slide, content_left, content_top, content_w - Inches(0.12), content_h, body,
+            font=theme["body_font"], size=Pt(18), color=color, shrink_to_fit=True,
         )
+    else:
+        bullets = slide_data.get("bullets") or []
+        if bullets:
+            _add_points(slide, content_left, content_top, content_w, bullets, theme, light=not on_dark)
     _add_footer(slide, ctx, on_dark=on_dark)
 
 
@@ -395,9 +384,7 @@ async def _add_image_text_slide(ctx: BuildContext, slide_data: SlideData, image_
     theme = ctx.theme
     slide, on_dark = _new_slide(ctx)
     _add_rail(slide, ctx.prs, theme["accent"])
-    content_top = _add_title_block(
-        slide, ctx.prs, slide_data, kicker=_kicker_text(slide_data, "Insight"), theme=theme, on_dark=on_dark
-    )
+    content_top = _add_title_block(slide, ctx.prs, slide_data, theme=theme, on_dark=on_dark)
 
     gap = GUTTER
     body_top = content_top
@@ -416,9 +403,17 @@ async def _add_image_text_slide(ctx: BuildContext, slide_data: SlideData, image_
         text_left = MARGIN
         text_w = ctx.prs.slide_width - MARGIN * 2
 
-    bullets = slide_data.get("bullets") or []
-    if bullets:
-        _add_points(slide, text_left, body_top, text_w, bullets, theme, light=not on_dark)
+    body = slide_data.get("body") or ""
+    if body:
+        color = theme["on_dark"] if on_dark else theme["body_color"]
+        _textbox(
+            slide, text_left, body_top, text_w, body_h, body,
+            font=theme["body_font"], size=Pt(17), color=color, shrink_to_fit=True,
+        )
+    else:
+        bullets = slide_data.get("bullets") or []
+        if bullets:
+            _add_points(slide, text_left, body_top, text_w, bullets, theme, light=not on_dark)
     _add_footer(slide, ctx, on_dark=on_dark)
 
 
@@ -427,7 +422,7 @@ def _add_cards_slide(ctx: BuildContext, slide_data: SlideData) -> None:
     slide, on_dark = _new_slide(ctx)
     _add_rail(slide, ctx.prs, theme["accent"])
     content_top = _add_title_block(
-        slide, ctx.prs, slide_data, kicker=_kicker_text(slide_data, "Framework"), theme=theme, on_dark=on_dark
+        slide, ctx.prs, slide_data, theme=theme, on_dark=on_dark
     )
     cards = slide_data.get("cards") or []
     if not cards:
@@ -443,17 +438,17 @@ def _add_cards_slide(ctx: BuildContext, slide_data: SlideData) -> None:
         _card_shape(slide, left, content_top, card_w, height, theme)
         inner = left + Inches(0.28)
         inner_w = card_w - Inches(0.56)
-        _textbox(
-            slide, inner, content_top + Inches(0.28), inner_w, Inches(0.36), f"{i + 1:02d}",
-            font=theme["heading_font"], size=Pt(14), color=theme["accent"], bold=True,
+        marker = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, inner, content_top + Inches(0.3), Inches(0.32), Inches(0.06)
         )
+        _fill_solid(marker, theme["accent"])
         _textbox(
-            slide, inner, content_top + Inches(0.7), inner_w, Inches(1.3), card.get("title") or "",
+            slide, inner, content_top + Inches(0.5), inner_w, Inches(1.3), card.get("title") or "",
             font=theme["heading_font"], size=Pt(20), color=theme["title_color"], bold=True,
             shrink_to_fit=True,
         )
         _textbox(
-            slide, inner, content_top + Inches(2.1), inner_w, height - Inches(2.4), card.get("body") or "",
+            slide, inner, content_top + Inches(1.9), inner_w, height - Inches(2.2), card.get("body") or "",
             font=theme["body_font"], size=Pt(14), color=theme["body_color"], shrink_to_fit=True,
         )
     _add_footer(slide, ctx, on_dark=on_dark)
@@ -464,7 +459,7 @@ def _add_stat_slide(ctx: BuildContext, slide_data: SlideData) -> None:
     slide, on_dark = _new_slide(ctx)
     _add_rail(slide, ctx.prs, theme["accent"])
     _add_title_block(
-        slide, ctx.prs, slide_data, kicker=_kicker_text(slide_data, "Signal"), theme=theme, on_dark=on_dark
+        slide, ctx.prs, slide_data, theme=theme, on_dark=on_dark
     )
     metric = slide_data.get("metric") or (slide_data.get("bullets") or ["—"])[0]
     label = slide_data.get("metric_label") or slide_data.get("subtitle") or ""
@@ -495,7 +490,7 @@ def _add_chart_slide(ctx: BuildContext, slide_data: SlideData) -> None:
     slide, on_dark = _new_slide(ctx)
     _add_rail(slide, ctx.prs, theme["accent"])
     content_top = _add_title_block(
-        slide, ctx.prs, slide_data, kicker=_kicker_text(slide_data, "Data"), theme=theme, on_dark=on_dark
+        slide, ctx.prs, slide_data, theme=theme, on_dark=on_dark
     )
 
     raw = slide_data.get("chart")
@@ -563,7 +558,7 @@ def _add_timeline_slide(ctx: BuildContext, slide_data: SlideData) -> None:
     slide, on_dark = _new_slide(ctx)
     _add_rail(slide, ctx.prs, theme["accent"])
     content_top = _add_title_block(
-        slide, ctx.prs, slide_data, kicker=_kicker_text(slide_data, "Roadmap"), theme=theme, on_dark=on_dark
+        slide, ctx.prs, slide_data, theme=theme, on_dark=on_dark
     )
     steps = (slide_data.get("timeline") or [])[:5]
     if not steps:
@@ -610,7 +605,7 @@ def _add_comparison_slide(ctx: BuildContext, slide_data: SlideData) -> None:
     slide, on_dark = _new_slide(ctx)
     _add_rail(slide, ctx.prs, theme["accent"])
     content_top = _add_title_block(
-        slide, ctx.prs, slide_data, kicker=_kicker_text(slide_data, "Trade-off"), theme=theme, on_dark=on_dark
+        slide, ctx.prs, slide_data, theme=theme, on_dark=on_dark
     )
     comparison = slide_data.get("comparison") or {}
     left_side = comparison.get("left") or {"title": "Вариант A", "bullets": []}
@@ -641,7 +636,7 @@ def _add_team_slide(ctx: BuildContext, slide_data: SlideData) -> None:
     slide, on_dark = _new_slide(ctx)
     _add_rail(slide, ctx.prs, theme["accent"])
     content_top = _add_title_block(
-        slide, ctx.prs, slide_data, kicker=_kicker_text(slide_data, "Team"), theme=theme, on_dark=on_dark
+        slide, ctx.prs, slide_data, theme=theme, on_dark=on_dark
     )
     members = (slide_data.get("team") or [])[:6]
     if not members:
@@ -728,12 +723,7 @@ def _add_divider_slide(ctx: BuildContext, slide_data: SlideData) -> None:
     slide, _ = _new_slide(ctx, dark=True)
     _add_rail(slide, ctx.prs, theme["accent"])
     _textbox(
-        slide, MARGIN, Inches(2.3), ctx.prs.slide_width - MARGIN * 2, Inches(0.4),
-        _kicker_text(slide_data, "Section"),
-        font=theme["body_font"], size=KICKER_SIZE, color=theme["accent_soft"], bold=True,
-    )
-    _textbox(
-        slide, MARGIN, Inches(2.75), ctx.prs.slide_width - MARGIN * 2, Inches(2.2),
+        slide, MARGIN, Inches(2.35), ctx.prs.slide_width - MARGIN * 2, Inches(2.2),
         slide_data.get("title") or "",
         font=theme["heading_font"], size=Pt(40), color=theme["on_dark"], bold=True,
         shrink_to_fit=True,
@@ -759,7 +749,7 @@ def _add_quote_slide(ctx: BuildContext, slide_data: SlideData) -> None:
         font=theme["heading_font"], size=Pt(32), color=theme["on_dark"], bold=True,
         shrink_to_fit=True,
     )
-    attribution = slide_data.get("subtitle") or slide_data.get("kicker") or ""
+    attribution = slide_data.get("subtitle") or ""
     if attribution:
         _textbox(
             slide, Inches(1.1), Inches(5.1), ctx.prs.slide_width - Inches(2.2), Inches(0.6),
@@ -774,19 +764,22 @@ def _add_closing_slide(ctx: BuildContext, slide_data: SlideData) -> None:
     slide, _ = _new_slide(ctx, dark=True)
     _add_rail(slide, ctx.prs, theme["accent"])
     _textbox(
-        slide, MARGIN, Inches(0.55), ctx.prs.slide_width - MARGIN * 2, Inches(0.35),
-        _kicker_text(slide_data, "Next move"),
-        font=theme["body_font"], size=KICKER_SIZE, color=theme["accent_soft"], bold=True,
-    )
-    _textbox(
-        slide, MARGIN, Inches(1.0), ctx.prs.slide_width - MARGIN * 2, Inches(1.6),
+        slide, MARGIN, Inches(0.55), ctx.prs.slide_width - MARGIN * 2, Inches(1.7),
         slide_data.get("title") or "Что делать дальше",
         font=theme["heading_font"], size=Pt(36), color=theme["on_dark"], bold=True,
         shrink_to_fit=True,
     )
-    bullets = slide_data.get("bullets") or []
-    if bullets:
-        _add_points(slide, MARGIN, Inches(2.8), ctx.prs.slide_width - MARGIN * 2, bullets, theme, light=False)
+    body = slide_data.get("body") or ""
+    if body:
+        _textbox(
+            slide, MARGIN, Inches(2.6), ctx.prs.slide_width - MARGIN * 2,
+            ctx.prs.slide_height - Inches(2.6) - FOOTER_H - Inches(0.2), body,
+            font=theme["body_font"], size=Pt(18), color=theme["on_dark_muted"], shrink_to_fit=True,
+        )
+    else:
+        bullets = slide_data.get("bullets") or []
+        if bullets:
+            _add_points(slide, MARGIN, Inches(2.6), ctx.prs.slide_width - MARGIN * 2, bullets, theme, light=False)
     _add_footer(slide, ctx, on_dark=True)
 
 

@@ -42,8 +42,14 @@ _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?…])\s+")
 ONE_IDEA_LENGTH_THRESHOLD = 140
 
 
-def clean_text(text: str) -> str:
-    """Убирает воду/протёкший markdown, оставляет одну мысль на длинных буллетах."""
+def clean_text(text: str, *, single_idea: bool = True) -> str:
+    """Убирает воду/протёкший markdown.
+
+    Если single_idea=True (буллеты, заголовки), длинный текст из 2+
+    предложений обрезается до первого — "один слайд/пункт - одна мысль".
+    Если single_idea=False (связный абзац в поле "body"), несколько
+    предложений — это ожидаемая форма, обрезка по предложениям не нужна.
+    """
     if not text:
         return text
 
@@ -59,7 +65,7 @@ def clean_text(text: str) -> str:
     # Делаем первую букву заглавной, если вырезка клише её "съела".
     cleaned = cleaned[0].upper() + cleaned[1:] if cleaned[0].isalpha() else cleaned
 
-    if len(cleaned) > ONE_IDEA_LENGTH_THRESHOLD:
+    if single_idea and len(cleaned) > ONE_IDEA_LENGTH_THRESHOLD:
         sentences = _SENTENCE_SPLIT_RE.split(cleaned)
         if len(sentences) > 1 and sentences[0].strip():
             cleaned = sentences[0].strip()

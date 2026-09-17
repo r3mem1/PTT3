@@ -66,8 +66,8 @@ class SlideData(TypedDict, total=False):
     layout: SlideLayout
     title: str
     subtitle: str
-    kicker: str
     bullets: list[str]
+    body: str
     image_query: str
     metric: str
     metric_label: str
@@ -111,6 +111,12 @@ _FORMAT_BULLET_LIMITS = {
     "image_heavy": (2, 160),
     "balanced": (4, BULLET_CHAR_LIMIT),
 }
+# То же самое, но для связного абзаца в поле "body" (альтернатива буллетам).
+_FORMAT_BODY_LIMITS = {
+    "image_only": 110,
+    "image_heavy": 220,
+    "balanced": 420,
+}
 DEFAULT_VISUAL_FORMAT = "balanced"
 
 
@@ -128,6 +134,16 @@ def _trim_bullet(text: str, limit: int = BULLET_CHAR_LIMIT) -> str:
 
 def _clean_field(value: Any, limit: int) -> str:
     return clean_text(str(value or "").strip())[:limit]
+
+
+def _trim_paragraph(text: str, limit: int) -> str:
+    """Как _trim_bullet, но не режет по первому предложению — "body" это
+    осознанно связный абзац из нескольких предложений, а не один буллет."""
+    text = clean_text(text.strip(), single_idea=False)
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0].rstrip(",.;:—-")
+    return (cut or text[:limit]) + "…"
 
 
 def _as_cards(item: dict) -> list[CardData]:
@@ -277,6 +293,7 @@ def normalize_presentation(data: Any, *, visual_format: str = DEFAULT_VISUAL_FOR
     max_bullets, bullet_limit = _FORMAT_BULLET_LIMITS.get(
         visual_format, _FORMAT_BULLET_LIMITS[DEFAULT_VISUAL_FORMAT]
     )
+    body_limit = _FORMAT_BODY_LIMITS.get(visual_format, _FORMAT_BODY_LIMITS[DEFAULT_VISUAL_FORMAT])
 
     slides: list[SlideData] = []
     for item in raw_slides:
@@ -305,7 +322,6 @@ def normalize_presentation(data: Any, *, visual_format: str = DEFAULT_VISUAL_FOR
             "layout": layout,  # type: ignore[typeddict-item]
             "title": _clean_field(item.get("title") or "Без названия", 90),
             "subtitle": _clean_field(item.get("subtitle"), 180),
-            "kicker": _clean_field(item.get("kicker"), 48),
             "bullets": bullets,
             "metric": _clean_field(item.get("metric"), 24),
             "metric_label": _clean_field(item.get("metric_label"), 80),
@@ -314,6 +330,10 @@ def normalize_presentation(data: Any, *, visual_format: str = DEFAULT_VISUAL_FOR
         query = str(item.get("image_query") or "").strip()
         if query:
             slide["image_query"] = query
+
+        body_raw = item.get("body")
+        if body_raw and str(body_raw).strip():
+            slide["body"] = _trim_paragraph(str(body_raw), body_limit)
 
         if layout == "chart":
             chart = _as_chart(item)
