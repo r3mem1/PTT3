@@ -1,0 +1,10 @@
+services:
+  bot:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      # Настройки пользователей, история тем и загруженные логотипы/фоны
+      # переживают перезапуск/пересборку контейнера.
+      - ./output:/app/output
+    restart: unless-stopped

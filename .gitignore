@@ -34,3 +34,7 @@ Desktop.ini
 .idea/
 .vscode/
 *.swp
+
+# Local Claude Code tooling (project-scoped agents/skills) - not part of the app
+.claude/
+CLAUDE.md

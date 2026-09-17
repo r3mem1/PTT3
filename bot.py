@@ -55,11 +55,10 @@ _busy_lock = asyncio.Lock()
 
 MAX_DOC_BYTES = 15 * 1024 * 1024
 SLIDES_PRESETS = (5, 8, 12)
-TONE_LABELS = {
-    "business": "Деловой",
-    "startup": "Стартап-питч",
-    "academic": "Учебный",
-    "minimal": "Минимал",
+FORMAT_LABELS = {
+    "balanced": "⚖️ Баланс",
+    "image_heavy": "🖼 Больше картинок",
+    "image_only": "🎯 Только картинки",
 }
 
 
@@ -73,6 +72,10 @@ class DocStates(StatesGroup):
 
 class LogoStates(StatesGroup):
     waiting_logo = State()
+
+
+class BackgroundStates(StatesGroup):
+    waiting_background = State()
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +121,7 @@ def main_menu_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="⚙️ Настройки", callback_data="menu:settings")],
             [InlineKeyboardButton(text="🕘 История", callback_data="menu:history")],
             [InlineKeyboardButton(text="🖼 Логотип", callback_data="menu:logo")],
+            [InlineKeyboardButton(text="🌄 Фон", callback_data="menu:background")],
             [InlineKeyboardButton(text="❓ Помощь", callback_data="menu:help")],
         ]
     )
@@ -135,9 +139,11 @@ def settings_menu_kb(user_settings: dict) -> InlineKeyboardMarkup:
     ]
     slide_row.append(InlineKeyboardButton(text="✏️ своё", callback_data="settings:slides:custom"))
 
-    tone_buttons = [
-        InlineKeyboardButton(text=f"{mark(user_settings['tone'] == key)}{label}", callback_data=f"settings:tone:{key}")
-        for key, label in TONE_LABELS.items()
+    format_buttons = [
+        InlineKeyboardButton(
+            text=f"{mark(user_settings['visual_format'] == key)}{label}", callback_data=f"settings:format:{key}"
+        )
+        for key, label in FORMAT_LABELS.items()
     ]
 
     lang_row = [
@@ -155,8 +161,7 @@ def settings_menu_kb(user_settings: dict) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             slide_row,
-            tone_buttons[:2],
-            tone_buttons[2:],
+            format_buttons,
             lang_row,
             theme_row,
             [InlineKeyboardButton(text="⬅️ В меню", callback_data="menu:root")],
@@ -189,8 +194,9 @@ def _help_text() -> str:
         "Отправьте тему текстом — например «Как ИИ меняет маркетинг» — или пришлите .docx документ, "
         "и я сделаю по нему краткую выжимку в виде слайдов.\n\n"
         "/menu — главное меню\n"
-        "/settings — число слайдов, стиль, язык, тема оформления\n"
+        "/settings — число слайдов, визуальный формат, язык, тема оформления\n"
         "/logo_remove — убрать загруженный логотип\n"
+        "/background_remove — убрать кастомный фон\n"
         "/cancel — отменить текущее действие"
     )
 
@@ -208,14 +214,16 @@ async def _generate_and_send(message: types.Message, user_id: int, topic: str, s
 
         await status.edit_text("⏳ Анализирую тему и собираю структуру...")
         raw_text = await generate_presentation_text(
-            topic, user_settings["slides_count"], tone=user_settings["tone"], lang=user_settings["lang"]
+            topic, user_settings["slides_count"], visual_format=user_settings["visual_format"], lang=user_settings["lang"]
         )
-        data = normalize_presentation(extract_json(raw_text))
+        data = normalize_presentation(extract_json(raw_text), visual_format=user_settings["visual_format"])
 
         await status.edit_text("🖼 Подбираю изображения и собираю слайды...")
         logo_path = Path(user_settings["logo_path"]) if user_settings.get("logo_path") else None
+        background_path = Path(user_settings["background_path"]) if user_settings.get("background_path") else None
         file_path = await build_presentation(
-            data, user_id, theme_preset=user_settings["theme_preset"], logo_path=logo_path
+            data, user_id, theme_preset=user_settings["theme_preset"], logo_path=logo_path,
+            background_path=background_path,
         )
 
         await message.answer_document(types.FSInputFile(file_path), caption=data["title"][:200])
@@ -287,6 +295,12 @@ async def cmd_logo_remove(message: types.Message) -> None:
     await message.answer("Логотип убран.")
 
 
+@dp.message(Command("background_remove"))
+async def cmd_background_remove(message: types.Message) -> None:
+    await db.set_user_setting(message.from_user.id, background_path=None)
+    await message.answer("Кастомный фон убран.")
+
+
 @dp.message(Command("cancel"))
 async def cmd_cancel(message: types.Message, state: FSMContext) -> None:
     await state.clear()
@@ -340,6 +354,18 @@ async def cb_menu_logo(callback: types.CallbackQuery, state: FSMContext) -> None
         callback.message,
         "Пришлите изображение логотипа (фото или файл-картинка) — буду накладывать его в угол каждого слайда.\n"
         "Чтобы убрать логотип позже — команда /logo_remove.",
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "menu:background")
+async def cb_menu_background(callback: types.CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(BackgroundStates.waiting_background)
+    await _safe_edit(
+        callback.message,
+        "Пришлите картинку фона (фото или файл-картинка) — применю её ко всей презентации целиком, "
+        "с автоподбором цвета текста под контрастность.\n"
+        "Чтобы убрать фон позже — команда /background_remove.",
     )
     await callback.answer()
 
@@ -420,13 +446,13 @@ async def on_custom_slides(message: types.Message, state: FSMContext) -> None:
     await message.answer("⚙️ Настройки генерации:", reply_markup=settings_menu_kb(user_settings))
 
 
-@dp.callback_query(F.data.startswith("settings:tone:"))
-async def cb_settings_tone(callback: types.CallbackQuery) -> None:
-    tone = callback.data.split(":")[-1]
-    await db.set_user_setting(callback.from_user.id, tone=tone)
+@dp.callback_query(F.data.startswith("settings:format:"))
+async def cb_settings_format(callback: types.CallbackQuery) -> None:
+    visual_format = callback.data.split(":")[-1]
+    await db.set_user_setting(callback.from_user.id, visual_format=visual_format)
     user_settings = await db.get_user_settings(callback.from_user.id)
     await _safe_edit(callback.message, "⚙️ Настройки генерации:", reply_markup=settings_menu_kb(user_settings))
-    await callback.answer("Стиль обновлён")
+    await callback.answer("Визуальный формат обновлён")
 
 
 @dp.callback_query(F.data.startswith("settings:lang:"))
@@ -478,6 +504,38 @@ async def on_logo_upload_invalid(message: types.Message) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Кастомный фон презентации
+# ---------------------------------------------------------------------------
+
+
+@dp.message(BackgroundStates.waiting_background, F.photo | F.document)
+async def on_background_upload(message: types.Message, state: FSMContext) -> None:
+    if message.photo:
+        file_id = message.photo[-1].file_id
+    elif message.document and (message.document.mime_type or "").startswith("image/"):
+        file_id = message.document.file_id
+    else:
+        await message.answer("Нужно изображение (фото или файл-картинка PNG/JPG), или /cancel для отмены.")
+        return
+
+    settings.background_dir.mkdir(parents=True, exist_ok=True)
+    dest = settings.background_dir / f"{message.from_user.id}.jpg"
+    tg_file = await bot.get_file(file_id)
+    await bot.download_file(tg_file.file_path, destination=str(dest))
+
+    await db.set_user_setting(message.from_user.id, background_path=str(dest))
+    await state.clear()
+    await message.answer(
+        "Фон сохранён ✅ Буду применять его ко всей презентации. Убрать — /background_remove."
+    )
+
+
+@dp.message(BackgroundStates.waiting_background)
+async def on_background_upload_invalid(message: types.Message) -> None:
+    await message.answer("Пришлите изображение (фото или файл-картинку), или /cancel для отмены.")
+
+
+# ---------------------------------------------------------------------------
 # Импорт Word-документа → черновик → (доработка) → сборка
 # ---------------------------------------------------------------------------
 
@@ -517,17 +575,18 @@ async def handle_document(message: types.Message, state: FSMContext) -> None:
 
         await status.edit_text("🧠 Делаю выжимку и продумываю структуру слайдов...")
         raw_text = await generate_presentation_text_from_document(
-            doc_text, user_settings["slides_count"], tone=user_settings["tone"], lang=user_settings["lang"]
+            doc_text, user_settings["slides_count"], visual_format=user_settings["visual_format"], lang=user_settings["lang"]
         )
-        draft = normalize_presentation(extract_json(raw_text))
+        draft = normalize_presentation(extract_json(raw_text), visual_format=user_settings["visual_format"])
 
         await state.update_data(
             doc_text=doc_text,
             slides_count=user_settings["slides_count"],
-            tone=user_settings["tone"],
+            visual_format=user_settings["visual_format"],
             lang=user_settings["lang"],
             theme_preset=user_settings["theme_preset"],
             logo_path=user_settings.get("logo_path"),
+            background_path=user_settings.get("background_path"),
             draft=draft,
         )
 
@@ -573,8 +632,10 @@ async def cb_doc_confirm(callback: types.CallbackQuery, state: FSMContext) -> No
     file_path: str | None = None
     try:
         logo_path = Path(data["logo_path"]) if data.get("logo_path") else None
+        background_path = Path(data["background_path"]) if data.get("background_path") else None
         file_path = await build_presentation(
-            draft, user_id, theme_preset=data.get("theme_preset"), logo_path=logo_path
+            draft, user_id, theme_preset=data.get("theme_preset"), logo_path=logo_path,
+            background_path=background_path,
         )
         await callback.message.answer_document(types.FSInputFile(file_path), caption=draft["title"][:200])
         await db.add_generation(user_id, draft["title"])
@@ -631,11 +692,11 @@ async def on_doc_edit_feedback(message: types.Message, state: FSMContext) -> Non
         raw_text = await generate_presentation_text_from_document(
             doc_text,
             data["slides_count"],
-            tone=data["tone"],
+            visual_format=data["visual_format"],
             lang=data["lang"],
             feedback=message.text.strip(),
         )
-        draft = normalize_presentation(extract_json(raw_text))
+        draft = normalize_presentation(extract_json(raw_text), visual_format=data["visual_format"])
         await state.update_data(draft=draft)
         await state.set_state(None)  # черновик снова готов к подтверждению, обычный текст не должен считаться правкой
         await status.delete()
